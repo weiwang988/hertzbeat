@@ -28,6 +28,8 @@ spring:
       static-locations:
         - classpath:/dist/
         - classpath:../dist/
+        - classpath:/view/
+        - classpath:../view/
   # need to disable spring boot mongodb auto config, or default mongodb connection tried and failed..
   autoconfigure:
     exclude: org.springframework.boot.autoconfigure.mongo.MongoAutoConfiguration, org.springframework.boot.autoconfigure.data.mongo.MongoDataAutoConfiguration
