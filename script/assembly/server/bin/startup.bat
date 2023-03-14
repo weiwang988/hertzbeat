@@ -16,7 +16,7 @@
 @rem
 
 @title HertzBeat
-@echo off 
+@echo off
 setlocal enabledelayedexpansion
 
 set SERVER_NAME=${project.artifactId}
@@ -29,7 +29,7 @@ cd /d %~dp0
 cd ..
 
 set DEPLOY_DIR=%~dp0..
-echo %DEPLOY_DIR%  
+echo %DEPLOY_DIR%
 
 set CONF_DIR=%DEPLOY_DIR%\config
 echo %CONF_DIR%
@@ -44,22 +44,26 @@ for /f "tokens=1-5" %%i in ('netstat -ano^|findstr "0.0.0.0:%SERVER_PORT%"') do 
 
 set LOGS_DIR=%DEPLOY_DIR%\logs
 
+if not exist %LOGS_DIR% (
+    mkdir %LOGS_DIR%
+)
+
 rem JVM Configuration
 set JAVA_OPTS= -Duser.timezone=Asia/Shanghai
 
-set JAVA_MEM_OPTS= -server -XX:SurvivorRatio=6 -XX:+UseParallelGC
+set JAVA_MEM_OPTS= -server -XX:SurvivorRatio=6 -XX:+UseParallelGC -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=%LOGS_DIR%
 
 
 set LOGGING_CONFIG=-Dlogging.config=%CONF_DIR%\logback-spring.xml
 
 set CONFIG_FILES= -Dlogging.path=%LOGS_DIR% %LOGGING_CONFIG% -Dspring.config.location=%CONF_DIR%/
-echo Starting the %SERVER_NAME% ...
+echo Starting the HertzBeat %SERVER_NAME% ...
 
-start javaw %JAVA_OPTS% %JAVA_MEM_OPTS% %CONFIG_FILES% -jar %DEPLOY_DIR%\%JAR_NAME%
+start javaw %JAVA_OPTS% %JAVA_MEM_OPTS% %CONFIG_FILES% -jar %DEPLOY_DIR%\%JAR_NAME% >logs\startup.log 2>&1 &
 
-echo "Service starting OK!"
+echo "Service Start Success!"
 for /f "tokens=1-5" %%i in ('netstat -ano^|findstr ":%SERVER_PORT%"') do (
-    echo Service PID: %%m , Port %SERVER_PORT%  
+    echo Service PID: %%m , Port %SERVER_PORT%
     goto q
 )
 

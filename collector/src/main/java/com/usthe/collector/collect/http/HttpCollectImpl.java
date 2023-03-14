@@ -23,6 +23,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.usthe.collector.collect.AbstractCollect;
 import com.usthe.collector.collect.common.http.CommonHttpClient;
+import com.usthe.collector.collect.http.promethus.exporter.ExporterParser;
+import com.usthe.collector.collect.http.promethus.exporter.MetricFamily;
 import com.usthe.collector.dispatch.DispatchConstants;
 import com.usthe.collector.util.CollectUtil;
 import com.usthe.collector.util.CollectorConstants;
@@ -31,6 +33,7 @@ import com.usthe.common.entity.job.Metrics;
 import com.usthe.common.entity.job.protocol.HttpProtocol;
 import com.usthe.common.entity.message.CollectRep;
 import com.usthe.common.util.CommonConstants;
+import com.usthe.common.util.CommonUtil;
 import com.usthe.common.util.IpDomainUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.net.util.Base64;
@@ -76,6 +79,8 @@ import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 
 /**
@@ -86,10 +91,7 @@ import java.util.Map;
 @Slf4j
 public class HttpCollectImpl extends AbstractCollect {
 
-    private HttpCollectImpl() {}
-
-    public static HttpCollectImpl getInstance() {
-        return Singleton.INSTANCE;
+    public HttpCollectImpl() {
     }
 
     @Override
@@ -118,23 +120,27 @@ public class HttpCollectImpl extends AbstractCollect {
                 return;
             } else {
                 // 2xx 3xx 状态码 成功
+                // todo 这里直接将InputStream转为了String, 对于prometheus exporter大数据来说, 会生成大对象, 可能会严重影响JVM内存空间
+                // todo 方法一、使用InputStream进行解析, 代码改动大; 方法二、手动触发gc, 可以参考dubbo for long i
                 String resp = EntityUtils.toString(response.getEntity(), StandardCharsets.UTF_8);
                 // 根据不同的解析方式解析
                 if (resp == null || "".equals(resp)) {
                     log.info("http response entity is empty, status: {}.", statusCode);
                 }
-                Long responseTime  = System.currentTimeMillis() - startTime;
+                Long responseTime = System.currentTimeMillis() - startTime;
                 String parseType = metrics.getHttp().getParseType();
                 try {
                     if (DispatchConstants.PARSE_DEFAULT.equals(parseType)) {
                         parseResponseByDefault(resp, metrics.getAliasFields(), metrics.getHttp(), builder, responseTime);
                     } else if (DispatchConstants.PARSE_JSON_PATH.equals(parseType)) {
                         parseResponseByJsonPath(resp, metrics.getAliasFields(), metrics.getHttp(), builder, responseTime);
+                    } else if (DispatchConstants.PARSE_PROM_QL.equalsIgnoreCase(parseType)) {
+                        parseResponseByPromQl(resp, metrics.getAliasFields(), metrics.getHttp(), builder);
                     } else if (DispatchConstants.PARSE_PROMETHEUS.equals(parseType)) {
-                        parseResponseByPrometheus(resp, metrics.getAliasFields(), metrics.getHttp(), builder);
+                        parseResponseByPrometheusExporter(resp, metrics.getAliasFields(), builder);
                     } else if (DispatchConstants.PARSE_XML_PATH.equals(parseType)) {
                         parseResponseByXmlPath(resp, metrics.getAliasFields(), metrics.getHttp(), builder);
-                    } else if (DispatchConstants.PARSE_WEBSITE.equals(parseType)){
+                    } else if (DispatchConstants.PARSE_WEBSITE.equals(parseType)) {
                         parseResponseByWebsite(resp, metrics.getAliasFields(), metrics.getHttp(), builder, responseTime);
                     } else if (DispatchConstants.PARSE_SITE_MAP.equals(parseType)) {
                         parseResponseBySiteMap(resp, metrics.getAliasFields(), builder);
@@ -148,40 +154,44 @@ public class HttpCollectImpl extends AbstractCollect {
                 }
             }
         } catch (ClientProtocolException e1) {
-            String errorMsg;
-            if (e1.getCause() != null) {
-                errorMsg = e1.getCause().getMessage();
-            } else {
-                errorMsg = e1.getMessage();
-            }
+            String errorMsg = CommonUtil.getMessageFromThrowable(e1);
             log.error(errorMsg);
             builder.setCode(CollectRep.Code.UN_CONNECTABLE);
             builder.setMsg(errorMsg);
         } catch (UnknownHostException e2) {
             // 对端不可达
-            log.info(e2.getMessage());
+            String errorMsg = CommonUtil.getMessageFromThrowable(e2);
+            log.info(errorMsg);
             builder.setCode(CollectRep.Code.UN_REACHABLE);
-            builder.setMsg("unknown host");
+            builder.setMsg("unknown host:" + errorMsg);
         } catch (InterruptedIOException | ConnectException | SSLException e3) {
             // 对端连接失败
-            log.info(e3.getMessage());
+            String errorMsg = CommonUtil.getMessageFromThrowable(e3);
+            log.info(errorMsg);
             builder.setCode(CollectRep.Code.UN_CONNECTABLE);
-            builder.setMsg(e3.getMessage());
+            builder.setMsg(errorMsg);
         } catch (IOException e4) {
             // 其它IO异常
-            log.info(e4.getMessage());
+            String errorMsg = CommonUtil.getMessageFromThrowable(e4);
+            log.info(errorMsg);
             builder.setCode(CollectRep.Code.FAIL);
-            builder.setMsg(e4.getMessage());
+            builder.setMsg(errorMsg);
         } catch (Exception e) {
             // 其它异常
-            log.error(e.getMessage(), e);
+            String errorMsg = CommonUtil.getMessageFromThrowable(e);
+            log.error(errorMsg, e);
             builder.setCode(CollectRep.Code.FAIL);
-            builder.setMsg(e.getMessage());
+            builder.setMsg(errorMsg);
         } finally {
             if (request != null) {
                 request.abort();
             }
         }
+    }
+
+    @Override
+    public String supportProtocol() {
+        return DispatchConstants.PROTOCOL_HTTP;
     }
 
     private void validateParams(Metrics metrics) throws Exception {
@@ -306,45 +316,98 @@ public class HttpCollectImpl extends AbstractCollect {
 
     private void parseResponseByJsonPath(String resp, List<String> aliasFields, HttpProtocol http,
                                          CollectRep.MetricsData.Builder builder, Long responseTime) {
-        List<Map<String, Object>> results = JsonPathParser.parseContentWithJsonPath(resp, http.getParseScript());
+        List<Object> results = JsonPathParser.parseContentWithJsonPath(resp, http.getParseScript());
         int keywordNum = CollectUtil.countMatchKeyword(resp, http.getKeyword());
         for (int i = 0; i < results.size(); i++) {
-            Map<String, Object> stringMap = results.get(i);
-            CollectRep.ValueRow.Builder valueRowBuilder = CollectRep.ValueRow.newBuilder();
-            // 监控目标版本问题可能出现属性不存在，stringMap为空时过滤。参考app-elasticsearch.yml的name: nodes
-            if (stringMap == null) {
+            Object objectValue = results.get(i);
+            // 监控目标版本问题可能出现属性不存在，为空时过滤。参考app-elasticsearch.yml的name: nodes
+            if (objectValue == null) {
                 continue;
             }
-            for (String alias : aliasFields) {
-                Object value = stringMap.get(alias);
-                if (value != null) {
-                    valueRowBuilder.addColumns(String.valueOf(value));
-                } else {
-                    if (alias.startsWith("$.")) {
-                        List<Map<String, Object>> subResults = JsonPathParser.parseContentWithJsonPath(resp, http.getParseScript() + alias.substring(1));
-                        if (subResults != null && subResults.size() > i) {
-                            Object resultValue = subResults.get(i);
-                            valueRowBuilder.addColumns(resultValue == null ? CommonConstants.NULL_VALUE : String.valueOf(resultValue));
+            if (objectValue instanceof Map) {
+                Map<String, Object> stringMap = (Map<String, Object>) objectValue;
+                CollectRep.ValueRow.Builder valueRowBuilder = CollectRep.ValueRow.newBuilder();
+                for (String alias : aliasFields) {
+                    Object value = stringMap.get(alias);
+                    if (value != null) {
+                        valueRowBuilder.addColumns(String.valueOf(value));
+                    } else {
+                        if (alias.startsWith("$.")) {
+                            List<Object> subResults = JsonPathParser.parseContentWithJsonPath(resp, http.getParseScript() + alias.substring(1));
+                            if (subResults != null && subResults.size() > i) {
+                                Object resultValue = subResults.get(i);
+                                valueRowBuilder.addColumns(resultValue == null ? CommonConstants.NULL_VALUE : String.valueOf(resultValue));
+                            } else {
+                                valueRowBuilder.addColumns(CommonConstants.NULL_VALUE);
+                            }
+                        } else if (CollectorConstants.RESPONSE_TIME.equalsIgnoreCase(alias)) {
+                            valueRowBuilder.addColumns(responseTime.toString());
+                        } else if (CollectorConstants.KEYWORD.equalsIgnoreCase(alias)) {
+                            valueRowBuilder.addColumns(Integer.toString(keywordNum));
                         } else {
                             valueRowBuilder.addColumns(CommonConstants.NULL_VALUE);
                         }
-                    } else if (CollectorConstants.RESPONSE_TIME.equalsIgnoreCase(alias)) {
+                    }
+                }
+                builder.addValues(valueRowBuilder.build());
+            } else if (objectValue instanceof String) {
+                String stringValue = (String) objectValue;
+                CollectRep.ValueRow.Builder valueRowBuilder = CollectRep.ValueRow.newBuilder();
+                for (String alias : aliasFields) {
+                    if (CollectorConstants.RESPONSE_TIME.equalsIgnoreCase(alias)) {
                         valueRowBuilder.addColumns(responseTime.toString());
                     } else if (CollectorConstants.KEYWORD.equalsIgnoreCase(alias)) {
                         valueRowBuilder.addColumns(Integer.toString(keywordNum));
                     } else {
-                        valueRowBuilder.addColumns(CommonConstants.NULL_VALUE);
+                        valueRowBuilder.addColumns(stringValue);
                     }
                 }
+                builder.addValues(valueRowBuilder.build());
             }
-            builder.addValues(valueRowBuilder.build());
         }
     }
 
-    private void parseResponseByPrometheus(String resp, List<String> aliasFields, HttpProtocol http,
-                                           CollectRep.MetricsData.Builder builder) {
+    private void parseResponseByPromQl(String resp, List<String> aliasFields, HttpProtocol http,
+                                       CollectRep.MetricsData.Builder builder) {
         AbstractPrometheusParse prometheusParser = PrometheusParseCreater.getPrometheusParse();
-        prometheusParser.handle(resp,aliasFields,http,builder);
+        prometheusParser.handle(resp, aliasFields, http, builder);
+    }
+
+    private static final Map<Long, ExporterParser> EXPORTER_PARSER_TABLE = new ConcurrentHashMap<>();
+
+    private void parseResponseByPrometheusExporter(String resp, List<String> aliasFields,
+                                                   CollectRep.MetricsData.Builder builder) {
+        if (!EXPORTER_PARSER_TABLE.containsKey(builder.getId())) {
+            EXPORTER_PARSER_TABLE.put(builder.getId(), new ExporterParser());
+        }
+        ExporterParser parser = EXPORTER_PARSER_TABLE.get(builder.getId());
+        Map<String, MetricFamily> metricFamilyMap = parser.textToMetric(resp);
+        String metrics = builder.getMetrics();
+        if (metricFamilyMap.containsKey(metrics)) {
+            MetricFamily metricFamily = metricFamilyMap.get(metrics);
+            for (MetricFamily.Metric metric : metricFamily.getMetricList()) {
+                Map<String, String> labelMap = metric.getLabelPair()
+                        .stream()
+                        .collect(Collectors.toMap(MetricFamily.Label::getName, MetricFamily.Label::getValue));
+                CollectRep.ValueRow.Builder valueRowBuilder = CollectRep.ValueRow.newBuilder();
+                for (String aliasField : aliasFields) {
+                    if ("value".equals(aliasField)) {
+                        if (metric.getCounter() != null) {
+                            valueRowBuilder.addColumns(metric.getCounter().getValue() + "");
+                        } else if (metric.getGauge() != null) {
+                            valueRowBuilder.addColumns(metric.getGauge().getValue() + "");
+                        } else if (metric.getUntyped() != null) {
+                            valueRowBuilder.addColumns(metric.getUntyped().getValue() + "");
+                        } else if (metric.getInfo() != null) {
+                            valueRowBuilder.addColumns(metric.getInfo().getValue() + "");
+                        }
+                    } else {
+                        valueRowBuilder.addColumns(labelMap.get(aliasField));
+                    }
+                }
+                builder.addValues(valueRowBuilder.build());
+            }
+        }
     }
 
     private void parseResponseByDefault(String resp, List<String> aliasFields, HttpProtocol http,
@@ -397,7 +460,7 @@ public class HttpCollectImpl extends AbstractCollect {
      * @param httpProtocol http protocol
      * @return context
      */
-    private HttpContext createHttpContext(HttpProtocol httpProtocol) {
+    public HttpContext createHttpContext(HttpProtocol httpProtocol) {
         HttpProtocol.Authorization auth = httpProtocol.getAuthorization();
         if (auth != null && DispatchConstants.DIGEST_AUTH.equals(auth.getType())) {
             HttpClientContext clientContext = new HttpClientContext();
@@ -419,17 +482,18 @@ public class HttpCollectImpl extends AbstractCollect {
 
     /**
      * 根据http配置参数构造请求头
+     *
      * @param httpProtocol http参数配置
      * @return 请求体
      */
-    private HttpUriRequest createHttpRequest(HttpProtocol httpProtocol) {
+    public HttpUriRequest createHttpRequest(HttpProtocol httpProtocol) {
         RequestBuilder requestBuilder;
         // method
         String httpMethod = httpProtocol.getMethod().toUpperCase();
         if (HttpMethod.GET.matches(httpMethod)) {
-            requestBuilder =  RequestBuilder.get();
+            requestBuilder = RequestBuilder.get();
         } else if (HttpMethod.POST.matches(httpMethod)) {
-            requestBuilder =  RequestBuilder.post();
+            requestBuilder = RequestBuilder.post();
         } else if (HttpMethod.PUT.matches(httpMethod)) {
             requestBuilder = RequestBuilder.put();
         } else if (HttpMethod.DELETE.matches(httpMethod)) {
@@ -446,20 +510,22 @@ public class HttpCollectImpl extends AbstractCollect {
         if (params != null && !params.isEmpty()) {
             for (Map.Entry<String, String> param : params.entrySet()) {
                 if (StringUtils.hasText(param.getValue())) {
-                    requestBuilder.addParameter(param.getKey(), param.getValue());
+                    requestBuilder.addParameter(CollectUtil.replaceUriSpecialChar(param.getKey()),
+                            CollectUtil.replaceUriSpecialChar(param.getValue()));
                 }
             }
         }
         // The default request header can be overridden if customized
         // keep-alive
         requestBuilder.addHeader(HttpHeaders.CONNECTION, "keep-alive");
-        requestBuilder.addHeader(HttpHeaders.USER_AGENT,"Mozilla/5.0 (Windows NT 6.1; WOW64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2272.76 Safari/537.36");
+        requestBuilder.addHeader(HttpHeaders.USER_AGENT, "Mozilla/5.0 (Windows NT 6.1; WOW64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2272.76 Safari/537.36");
         // headers  The custom request header is overwritten here
         Map<String, String> headers = httpProtocol.getHeaders();
         if (headers != null && !headers.isEmpty()) {
             for (Map.Entry<String, String> header : headers.entrySet()) {
                 if (StringUtils.hasText(header.getValue())) {
-                    requestBuilder.addHeader(header.getKey(), header.getValue());
+                    requestBuilder.addHeader(CollectUtil.replaceUriSpecialChar(header.getKey()),
+                            CollectUtil.replaceUriSpecialChar(header.getValue()));
                 }
             }
         }
@@ -469,9 +535,6 @@ public class HttpCollectImpl extends AbstractCollect {
             requestBuilder.addHeader(HttpHeaders.ACCEPT, "application/json");
         } else if (DispatchConstants.PARSE_XML_PATH.equals(httpProtocol.getParseType())) {
             requestBuilder.addHeader(HttpHeaders.ACCEPT, "text/xml,application/xml");
-        } else if (DispatchConstants.PARSE_PROMETHEUS.equals(httpProtocol.getParseType())) {
-            requestBuilder.addHeader(HttpHeaders.ACCEPT, DispatchConstants.PARSE_PROMETHEUS_ACCEPT);
-            requestBuilder.addHeader(HttpHeaders.ACCEPT_ENCODING, "gzip");
         } else {
             requestBuilder.addHeader(HttpHeaders.ACCEPT, "*/*");
         }
@@ -488,25 +551,26 @@ public class HttpCollectImpl extends AbstractCollect {
                         && StringUtils.hasText(authorization.getBasicAuthPassword())) {
                     String authStr = authorization.getBasicAuthUsername() + ":" + authorization.getBasicAuthPassword();
                     String encodedAuth = new String(Base64.encodeBase64(authStr.getBytes(StandardCharsets.UTF_8)), StandardCharsets.UTF_8);
-                    requestBuilder.addHeader(HttpHeaders.AUTHORIZATION,  DispatchConstants.BASIC + " " + encodedAuth);
+                    requestBuilder.addHeader(HttpHeaders.AUTHORIZATION, DispatchConstants.BASIC + " " + encodedAuth);
                 }
             }
         }
 
         // 请求内容，会覆盖post协议的params
-        if(StringUtils.hasLength(httpProtocol.getPayload())){
+        if (StringUtils.hasLength(httpProtocol.getPayload())) {
             requestBuilder.setEntity(new StringEntity(httpProtocol.getPayload(), StandardCharsets.UTF_8));
         }
 
         // uri
+        String uri = CollectUtil.replaceUriSpecialChar(httpProtocol.getUrl());
         if (IpDomainUtil.isHasSchema(httpProtocol.getHost())) {
-            requestBuilder.setUri(httpProtocol.getHost() + ":" + httpProtocol.getPort() + httpProtocol.getUrl());
+            requestBuilder.setUri(httpProtocol.getHost() + ":" + httpProtocol.getPort() + uri);
         } else {
             boolean ssl = Boolean.parseBoolean(httpProtocol.getSsl());
             if (ssl) {
-                requestBuilder.setUri("https://" + httpProtocol.getHost() + ":" + httpProtocol.getPort() + httpProtocol.getUrl());
+                requestBuilder.setUri(CollectorConstants.HTTPS_HEADER + httpProtocol.getHost() + ":" + httpProtocol.getPort() + uri);
             } else {
-                requestBuilder.setUri("http://" + httpProtocol.getHost() + ":" + httpProtocol.getPort() + httpProtocol.getUrl());
+                requestBuilder.setUri(CollectorConstants.HTTP_HEADER + httpProtocol.getHost() + ":" + httpProtocol.getPort() + uri);
             }
         }
 
@@ -521,9 +585,5 @@ public class HttpCollectImpl extends AbstractCollect {
             requestBuilder.setConfig(requestConfig);
         }
         return requestBuilder.build();
-    }
-
-    private static class Singleton {
-        private static final HttpCollectImpl INSTANCE = new HttpCollectImpl();
     }
 }

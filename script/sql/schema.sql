@@ -29,7 +29,7 @@ DROP TABLE IF EXISTS  hzb_monitor ;
 CREATE TABLE  hzb_monitor
 (
      id           bigint       not null auto_increment comment '监控ID',
-     job_id       bigint       not null comment '监控对应下发的任务ID',
+     job_id       bigint       comment '监控对应下发的任务ID',
      name         varchar(100) not null comment '监控的名称',
      app          varchar(100) not null comment '监控的类型:linux,mysql,jvm...',
      host         varchar(100) not null comment '监控的对端host:ipv4,ipv6,域名',
@@ -195,6 +195,9 @@ CREATE TABLE  hzb_notice_rule
     filter_all     boolean          not null default true comment '是否转发所有',
     priorities     varchar(100)     comment '过滤匹配告警级别，空为全部告警级别',
     tags           varchar(4000)    comment '过滤匹配告警信息标签(monitorId:xxx,monitorName:xxx)',
+    days           varchar(100)     comment '星期几,多选,全选或空则为每天 7:周日 1:周一 2:周二 3:周三 4:周四 5:周五 6:周六',
+    period_start   timestamp        comment '限制时间段起始:00:00:00',
+    period_end     timestamp        comment '限制时间段截止:23:59:59',
     creator        varchar(100)     comment '创建者',
     modifier       varchar(100)     comment '最新修改者',
     gmt_create     timestamp        default current_timestamp comment 'create time',

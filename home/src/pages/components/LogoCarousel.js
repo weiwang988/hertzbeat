@@ -7,6 +7,8 @@ import Slider from "react-slick";
 
 const iconCommonUrl = '/img/icons/'
 
+// const cdnUrl = '/img/icons/'
+
 var settings = {
     dots: false,
     infinite: true,
@@ -33,8 +35,9 @@ export default class LogoCarousel extends React.Component {
         this.list = () => (
             <Slider {...settings}>
                 {this.props.logos.map((value, index) => (
-                    <a key={index} href={value.url} target="_blank" rel="noopener noreferrer">
-                        <img style={{ maxHeight: '80px', maxWidth: '100px' }} src={value.remoteImg} onError={(e) => e.target.src = iconCommonUrl + value.img} alt={value.alt} />
+                    <a key={index} href={value.url == null ? '#' : value.url} target="_blank" rel="noopener noreferrer">
+                        <img style={{ maxHeight: '100px', maxWidth: '120px' }} src={value.remoteImg == null ? iconCommonUrl + value.img : value.remoteImg}
+                             onError={(e) => e.target.src = iconCommonUrl + value.img} alt={value.alt} />
                     </a>
                 ))}
             </Slider>

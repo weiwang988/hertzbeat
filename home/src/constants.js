@@ -5,14 +5,14 @@ import Translate, { translate } from '@docusaurus/Translate'
 export const features = [
   {
     title: translate({
-      message: '开箱即用',
+      message: 'convenient',
     }),
     description: (
       <>
         <Translate
           values={{
+            docker: <code>{'docker run -d -p 1157:1157 tancloud/hertzbeat'}</code>,
             TANCLOUD: <strong>TANCLOUD</strong>,
-            SAAS: <strong>SAAS</strong>,
             console: (
               <a href={'https://www.console.tancloud.cn'}>
                 <strong>Login Now</strong>
@@ -21,16 +21,14 @@ export const features = [
             br: <br />,
           }}
         >
-          {'中小团队和个人无需再为了监控自己的网站资源，而去部署一套繁琐的监控系统。往往有时候，那套监控系统比自身网站消耗的资源还大。' +
-            '{TANCLOUD} 提供{SAAS}云版本，{console}即可开始您的服务监控。{br}' +
-            '安全是最重要的，我们对账户密钥和监控密钥全链路加密。'}
+          {'convenient-content'}
         </Translate>
       </>
     ),
   },
   {
     title: translate({
-      message: '多支持与自定义',
+      message: 'custom-multi-support',
     }),
     description: (
       <>
@@ -44,16 +42,14 @@ export const features = [
             br: <br />,
           }}
         >
-          {'HertzBeat目前支持对网站，API，PING连通性，端口可用性，SiteMap全站，数据库，操作系统等的监控，快速迭代提供更多的监控类型和性能指标。{br}' +
-            '我们提供了更自由化的阈值告警配置，支持邮箱，短信，webhook，钉钉，企业微信，飞书机器人等告警通知。{br}' +
-            '不同团队的监控需求千变万化，我们提供{custom}，仅需配置YML就能快速接入监控系统。'}
+          {'custom-multi-support-content'}
         </Translate>
       </>
     ),
   },
   {
     title: translate({
-      message: '拥抱开源',
+      message: 'opensource',
     }),
     description: (
       <>
@@ -72,10 +68,7 @@ export const features = [
             br: <br />,
           }}
         >
-          {'HertzBeat监控系统代码开源，非常欢迎任何对此有兴趣的同学参与中来，我们一起进步，丰富的资源文档正在完善中。{br}' +
-            '中二的我们相信开源改变世界！{br}' +
-            '{github} {br}' +
-            '{gitee}'}
+          {'opensource-content'}
         </Translate>
       </>
     ),
@@ -93,7 +86,7 @@ export const dromaraFriends = [
     img: 'jpom_logo.png',
     remoteImg: 'https://plus.hutool.cn/images/dromara/jpom.png',
     alt: 'jpom',
-    url: 'https://jpom.io/',
+    url: 'https://jpom.top/',
   },
   {
     img: 'fast_request_logo.gif',
@@ -117,7 +110,7 @@ export const dromaraFriends = [
     img: 'satoken_logo.png',
     remoteImg: 'https://plus.hutool.cn/images/dromara/sa-token.png',
     alt: 'Sa-Token',
-    url: 'http://sa-token.dev33.cn/',
+    url: 'https://sa-token.cc/',
   },
   {
     img: 'koalas_rpc_logo.png',
@@ -177,7 +170,7 @@ export const dromaraFriends = [
     img: 'northstar_logo.png',
     remoteImg: 'https://plus.hutool.cn/images/dromara/northstar_logo.png',
     alt: 'northstar',
-    url: 'https://gitee.com/dromara/northstar',
+    url: 'https://www.quantit.tech',
   },
   {
     img: 'mendmix_logo.png',
@@ -214,6 +207,12 @@ export const dromaraFriends = [
     remoteImg: 'https://plus.hutool.cn/images/dromara/go-view.png',
     alt: 'go-view',
     url: 'https://gitee.com/dromara/go-view',
+  },
+  {
+    img: 'neutrino-proxy_logo.png',
+    remoteImg: 'https://neutrino-proxy.oss-cn-hangzhou.aliyuncs.com/logo-text-cross-0.5x.png',
+    alt: 'neutrino-proxy',
+    url: 'https://gitee.com/dromara/neutrino-proxy',
   }
 ]
 
@@ -225,38 +224,29 @@ export const friendsLink = [
   },
 ]
 
-export const SetupExample = `
-<dependency>
-    <groupId>com.usthe.sureness</groupId>
-    <artifactId>sureness-core</artifactId>
-    <version>1.0.6</version>
-</dependency>
-
-compile group: 'com.usthe.sureness', name: 'sureness-core', version: '1.0.6'
-`
-
-export const SurenessIntegration = `
-    @Override
-    public void doFilter(ServletRequest servletRequest, ServletResponse servletResponse, FilterChain filterChain)
-            throws IOException, ServletException {
-        try {
-            SubjectSum subject = SurenessSecurityManager.getInstance().checkIn(servletRequest);
-        } catch (IncorrectCredentialsException | UnknownAccountException | ExpiredCredentialsException e1) {
-            logger.debug("this request account info is illegal");
-            responseWrite(ResponseEntity
-                    .status(HttpStatus.UNAUTHORIZED).body(e1.getMessage()), servletResponse);
-            return;
-        } catch (UnauthorizedException e4) {
-            logger.debug("this account can not access this resource");
-            responseWrite(ResponseEntity
-                    .status(HttpStatus.FORBIDDEN).body(e4.getMessage()), servletResponse);
-            return;
-        } catch (RuntimeException e) {
-            logger.error("other exception happen: ", e);
-            responseWrite(ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build(),
-                    servletResponse);
-            return;
-        }
-        filterChain.doFilter(servletRequest, servletResponse);
-    }
-`
+export const usersLink = [
+  {
+    img: 'skyworth_logo.png',
+    alt: 'skyworth',
+  },
+  {
+    img: 'sc_edu_logo.png',
+    alt: 'sc_edu_logo',
+  },
+  {
+    img: 'cmge_logo.png',
+    alt: 'cmge',
+  },
+  {
+    img: 'cnsodata_logo.svg',
+    alt: 'cnsodata',
+  },
+  {
+    img: 'tancloud_logo.svg',
+    alt: 'tancloud',
+  },
+  {
+    img: 'hibobi_logo.svg',
+    alt: 'hibobi',
+  }
+]

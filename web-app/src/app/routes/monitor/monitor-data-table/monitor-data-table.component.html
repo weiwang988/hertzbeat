@@ -7,7 +7,10 @@
     </thead>
     <tbody>
       <tr *ngFor="let valueRow of smallTable.data">
-        <td *ngFor="let value of valueRow.values">{{ value.origin }}</td>
+        <td *ngFor="let value of valueRow.values; let i = index">
+          {{ value.origin }}
+          <nz-tag *ngIf="fields[i].unit" nzColor="success">{{ fields[i].unit }}</nz-tag>
+        </td>
       </tr>
     </tbody>
   </nz-table>
@@ -24,7 +27,10 @@
     <tbody>
       <tr *ngFor="let field of fields; let i = index">
         <td>{{ field.name }}</td>
-        <td>{{ rowValues[i].origin + ' ' + (field.unit ? field.unit : '') }}</td>
+        <td
+          >{{ rowValues[i].origin }}
+          <nz-tag *ngIf="field.unit" nzColor="success">{{ field.unit }}</nz-tag>
+        </td>
       </tr>
     </tbody>
   </nz-table>
@@ -33,11 +39,11 @@
 <ng-template #monitor_metrics_card_title>
   <p style="font-size: small; text-align: center; margin-bottom: 3px">{{ metrics }}</p>
   <div>
-    <a nz-popover [nzPopoverContent]="'Last Collect Time ' + (time | _date: 'yyyy-MM-dd HH:mm:ss')">
+    <a nz-popover [nzPopoverContent]="'Last Collect Time ' + (time | _date : 'yyyy-MM-dd HH:mm:ss')">
       <i nz-icon nzType="field-time" nzTheme="outline"></i
     ></a>
     <i style="font-size: 0.3px; font-weight: normal; color: rgba(112, 112, 112, 0.89)">
-      {{ 'monitors.collect.time' | i18n }}:{{ time | _date: 'HH:mm:ss' }}
+      {{ 'monitors.collect.time' | i18n }}:{{ time | _date : 'HH:mm:ss' }}
     </i>
   </div>
 </ng-template>

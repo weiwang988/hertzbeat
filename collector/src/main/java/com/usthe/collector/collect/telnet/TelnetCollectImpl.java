@@ -18,11 +18,13 @@
 package com.usthe.collector.collect.telnet;
 
 import com.usthe.collector.collect.AbstractCollect;
+import com.usthe.collector.dispatch.DispatchConstants;
 import com.usthe.collector.util.CollectorConstants;
 import com.usthe.common.entity.job.Metrics;
 import com.usthe.common.entity.job.protocol.TelnetProtocol;
 import com.usthe.common.entity.message.CollectRep;
 import com.usthe.common.util.CommonConstants;
+import com.usthe.common.util.CommonUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.net.telnet.TelnetClient;
 
@@ -37,12 +39,7 @@ import java.net.ConnectException;
 @Slf4j
 public class TelnetCollectImpl extends AbstractCollect {
 
-    private TelnetCollectImpl(){}
-
-    public static TelnetCollectImpl getInstance() {
-        return TelnetCollectImpl.Singleton.INSTANCE;
-    }
-
+    public TelnetCollectImpl(){}
 
     @Override
     public void collect(CollectRep.MetricsData.Builder builder, long appId, String app, Metrics metrics) {
@@ -86,13 +83,20 @@ public class TelnetCollectImpl extends AbstractCollect {
             }
             telnetClient.disconnect();
         } catch (ConnectException connectException) {
-            log.debug(connectException.getMessage());
+            String errorMsg = CommonUtil.getMessageFromThrowable(connectException);
+            log.debug(errorMsg);
             builder.setCode(CollectRep.Code.UN_CONNECTABLE);
-            builder.setMsg("对端拒绝连接：服务未启动端口监听或防火墙");
+            builder.setMsg("The peer refused to connect: service port does not listening or firewall: " + errorMsg);
         } catch (IOException ioException) {
-            log.debug(ioException.getMessage());
+            String errorMsg = CommonUtil.getMessageFromThrowable(ioException);
+            log.info(errorMsg);
             builder.setCode(CollectRep.Code.UN_CONNECTABLE);
-            builder.setMsg("对端连接失败 " + ioException.getMessage());
+            builder.setMsg("Peer connection failed: " + errorMsg);
+        } catch (Exception e) {
+            String errorMsg = CommonUtil.getMessageFromThrowable(e);
+            log.warn(errorMsg, e);
+            builder.setCode(CollectRep.Code.FAIL);
+            builder.setMsg(errorMsg);
         } finally {
             if (telnetClient != null) {
                 try {
@@ -104,7 +108,8 @@ public class TelnetCollectImpl extends AbstractCollect {
         }
     }
 
-    private static class Singleton {
-        private static final TelnetCollectImpl INSTANCE = new TelnetCollectImpl();
+    @Override
+    public String supportProtocol() {
+        return DispatchConstants.PROTOCOL_TELNET;
     }
 }

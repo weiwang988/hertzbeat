@@ -213,7 +213,9 @@ export class AlertNoticeComponent implements OnInit {
           message => {
             if (message.code === 0) {
               this.isManageReceiverModalVisible = false;
-              this.notifySvc.success(this.i18nSvc.fanyi('common.notify.new-success'), '');
+              this.notifySvc.success(this.i18nSvc.fanyi('common.notify.new-success'), this.i18nSvc.fanyi('alert.notice.receiver.next'), {
+                nzDuration: 15000
+              });
               this.loadReceiversTable();
             } else {
               this.notifySvc.error(this.i18nSvc.fanyi('common.notify.new-fail'), message.msg);
@@ -237,7 +239,9 @@ export class AlertNoticeComponent implements OnInit {
           message => {
             if (message.code === 0) {
               this.isManageReceiverModalVisible = false;
-              this.notifySvc.success(this.i18nSvc.fanyi('common.notify.edit-success'), '');
+              this.notifySvc.success(this.i18nSvc.fanyi('common.notify.edit-success'), this.i18nSvc.fanyi('alert.notice.receiver.next'), {
+                nzDuration: 15000
+              });
               this.loadReceiversTable();
             } else {
               this.notifySvc.error(this.i18nSvc.fanyi('common.notify.edit-fail'), message.msg);
@@ -255,20 +259,36 @@ export class AlertNoticeComponent implements OnInit {
   isManageRuleModalVisible: boolean = false;
   isManageRuleModalAdd: boolean = true;
   isManageRuleModalOkLoading: boolean = false;
-  rule!: NoticeRule;
+  rule: NoticeRule = new NoticeRule();
   receiversOption: any[] = [];
   searchTag!: string;
   tagsOption: any[] = [];
   filterTags: string[] = [];
+  isLimit: boolean = false;
+  dayCheckOptions = [
+    { label: this.i18nSvc.fanyi('common.week.7'), value: 7, checked: true },
+    { label: this.i18nSvc.fanyi('common.week.1'), value: 1, checked: true },
+    { label: this.i18nSvc.fanyi('common.week.2'), value: 2, checked: true },
+    { label: this.i18nSvc.fanyi('common.week.3'), value: 3, checked: true },
+    { label: this.i18nSvc.fanyi('common.week.4'), value: 4, checked: true },
+    { label: this.i18nSvc.fanyi('common.week.5'), value: 5, checked: true },
+    { label: this.i18nSvc.fanyi('common.week.6'), value: 6, checked: true }
+  ];
 
   onNewNoticeRule() {
     this.rule = new NoticeRule();
+    this.isLimit = false;
     this.isManageRuleModalVisible = true;
     this.isManageRuleModalAdd = true;
   }
 
   onEditOneNoticeRule(rule: NoticeRule) {
     this.rule = rule;
+    if (this.rule.days == null || this.rule.days.length == 7) {
+      this.isLimit = false;
+    } else {
+      this.isLimit = true;
+    }
     this.isManageRuleModalVisible = true;
     this.isManageRuleModalAdd = false;
     this.receiversOption.push({
@@ -288,6 +308,24 @@ export class AlertNoticeComponent implements OnInit {
           label: tag
         });
       });
+    }
+  }
+
+  onNoticeRuleDaysChange(value: any[]) {
+    this.rule.days = value
+      .filter(item => item.checked == true)
+      .map(item => item.value)
+      .concat();
+  }
+
+  onNoticeRuleLimitChange(limit: boolean) {
+    if (!limit) {
+      this.rule.days = this.dayCheckOptions.map(item => item.value).concat();
+    } else {
+      this.rule.days = this.dayCheckOptions
+        .filter(item => item.checked == true)
+        .map(item => item.value)
+        .concat();
     }
   }
 
@@ -321,6 +359,9 @@ export class AlertNoticeComponent implements OnInit {
                   break;
                 case 6:
                   label = `${label}FeiShu`;
+                  break;
+                case 7:
+                  label = `${label}TelegramBot`;
                   break;
               }
               this.receiversOption.push({

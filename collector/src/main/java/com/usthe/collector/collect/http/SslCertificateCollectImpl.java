@@ -18,11 +18,13 @@
 package com.usthe.collector.collect.http;
 
 import com.usthe.collector.collect.AbstractCollect;
+import com.usthe.collector.dispatch.DispatchConstants;
 import com.usthe.collector.util.CollectorConstants;
 import com.usthe.common.entity.job.Metrics;
 import com.usthe.common.entity.job.protocol.HttpProtocol;
 import com.usthe.common.entity.message.CollectRep;
 import com.usthe.common.util.CommonConstants;
+import com.usthe.common.util.CommonUtil;
 import com.usthe.common.util.IpDomainUtil;
 import lombok.extern.slf4j.Slf4j;
 
@@ -54,11 +56,7 @@ public class SslCertificateCollectImpl extends AbstractCollect {
     private static final String NAME_END_TIME = "end_time";
     private static final String NAME_END_TIMESTAMP = "end_timestamp";
 
-    private SslCertificateCollectImpl() {}
-
-    public static SslCertificateCollectImpl getInstance() {
-        return Singleton.INSTANCE;
-    }
+    public SslCertificateCollectImpl() {}
 
     @Override
     public void collect(CollectRep.MetricsData.Builder builder,
@@ -127,29 +125,38 @@ public class SslCertificateCollectImpl extends AbstractCollect {
             builder.setMsg(errorMsg);
         } catch (UnknownHostException e2) {
             // 对端不可达
-            log.info(e2.getMessage());
+            String errorMsg = CommonUtil.getMessageFromThrowable(e2);
+            log.info(errorMsg);
             builder.setCode(CollectRep.Code.UN_REACHABLE);
-            builder.setMsg("unknown host");
+            builder.setMsg("unknown host:" + errorMsg);
         } catch (InterruptedIOException | ConnectException | SSLException e3) {
             // 对端连接失败
-            log.info(e3.getMessage());
+            String errorMsg = CommonUtil.getMessageFromThrowable(e3);
+            log.info(errorMsg);
             builder.setCode(CollectRep.Code.UN_CONNECTABLE);
-            builder.setMsg(e3.getMessage());
+            builder.setMsg(errorMsg);
         } catch (IOException e4) {
             // 其它IO异常
-            log.info(e4.getMessage());
+            String errorMsg = CommonUtil.getMessageFromThrowable(e4);
+            log.info(errorMsg);
             builder.setCode(CollectRep.Code.FAIL);
-            builder.setMsg(e4.getMessage());
+            builder.setMsg(errorMsg);
         } catch (Exception e) {
             // 其它异常
-            log.error(e.getMessage(), e);
+            String errorMsg = CommonUtil.getMessageFromThrowable(e);
+            log.error(errorMsg, e);
             builder.setCode(CollectRep.Code.FAIL);
-            builder.setMsg(e.getMessage());
+            builder.setMsg(errorMsg);
         } finally {
             if (urlConnection != null) {
                 urlConnection.disconnect();
             }
         }
+    }
+
+    @Override
+    public String supportProtocol() {
+        return DispatchConstants.PROTOCOL_SSL_CERT;
     }
 
     private void validateParams(Metrics metrics) throws Exception {
@@ -162,9 +169,5 @@ public class SslCertificateCollectImpl extends AbstractCollect {
                 || !httpProtocol.getUrl().startsWith("/")) {
             httpProtocol.setUrl(httpProtocol.getUrl() == null ? "/" : "/" + httpProtocol.getUrl().trim());
         }
-    }
-
-    private static class Singleton {
-        private static final SslCertificateCollectImpl INSTANCE = new SslCertificateCollectImpl();
     }
 }

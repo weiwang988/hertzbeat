@@ -19,28 +19,29 @@ package com.usthe.collector.dispatch;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
-import com.usthe.collector.dispatch.export.MetricsDataExporter;
 import com.usthe.collector.dispatch.timer.Timeout;
 import com.usthe.collector.dispatch.timer.TimerDispatch;
 import com.usthe.collector.dispatch.timer.WheelTimerTask;
+import com.usthe.collector.dispatch.unit.UnitConvert;
 import com.usthe.collector.util.CollectUtil;
 import com.usthe.common.entity.job.Configmap;
 import com.usthe.common.entity.job.Job;
 import com.usthe.common.entity.job.Metrics;
 import com.usthe.common.entity.message.CollectRep;
+import com.usthe.common.queue.CommonDataQueue;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Indicator group collection task and response data scheduler
@@ -58,6 +59,11 @@ public class CommonDispatcher implements MetricsTaskDispatch, CollectDataDispatc
      * 指标组采集任务超时时间值
      */
     private static final long DURATION_TIME = 240_000L;
+    /**
+     * trigger sub task max num
+     * 触发子任务最大数量
+     */
+    private static final int MAX_SUB_TASK_NUM = 50;
     private static final Gson GSON = new Gson();
     /**
      * Priority queue of index group collection tasks
@@ -70,21 +76,27 @@ public class CommonDispatcher implements MetricsTaskDispatch, CollectDataDispatc
      */
     private TimerDispatch timerDispatch;
     /**
-     * kafka collection data exporter
-     * kafka采集数据导出器
+     * collection data exporter
+     * 采集数据导出器
      */
-    private MetricsDataExporter kafkaDataExporter;
+    private CommonDataQueue commonDataQueue;
     /**
      * Metric group task and start time mapping map
      * 指标组任务与开始时间映射map
      */
     private Map<String, MetricsTime> metricsTimeoutMonitorMap;
 
-    public CommonDispatcher(MetricsCollectorQueue jobRequestQueue, TimerDispatch timerDispatch,
-                            MetricsDataExporter kafkaDataExporter, WorkerPool workerPool) {
-        this.kafkaDataExporter = kafkaDataExporter;
+    private final List<UnitConvert> unitConvertList;
+
+    public CommonDispatcher(MetricsCollectorQueue jobRequestQueue,
+                            TimerDispatch timerDispatch,
+                            CommonDataQueue commonDataQueue,
+                            WorkerPool workerPool,
+                            List<UnitConvert> unitConvertList) {
+        this.commonDataQueue = commonDataQueue;
         this.jobRequestQueue = jobRequestQueue;
         this.timerDispatch = timerDispatch;
+        this.unitConvertList = unitConvertList;
         ThreadPoolExecutor poolExecutor = new ThreadPoolExecutor(2, 2, 1,
                 TimeUnit.SECONDS,
                 new SynchronousQueue<>(), r -> {
@@ -168,7 +180,7 @@ public class CommonDispatcher implements MetricsTaskDispatch, CollectDataDispatc
         job.constructPriorMetrics();
         Set<Metrics> metricsSet = job.getNextCollectMetrics(null, true);
         metricsSet.forEach(metrics -> {
-            MetricsCollect metricsCollect = new MetricsCollect(metrics, timeout, this);
+            MetricsCollect metricsCollect = new MetricsCollect(metrics, timeout, this, unitConvertList);
             jobRequestQueue.addJob(metricsCollect);
             metricsTimeoutMonitorMap.put(job.getId() + "-" + metrics.getName(),
                     new MetricsTime(System.currentTimeMillis(), metrics, timeout));
@@ -179,12 +191,22 @@ public class CommonDispatcher implements MetricsTaskDispatch, CollectDataDispatc
     public void dispatchCollectData(Timeout timeout, Metrics metrics, CollectRep.MetricsData metricsData) {
         WheelTimerTask timerJob = (WheelTimerTask) timeout.task();
         Job job = timerJob.getJob();
-        metricsTimeoutMonitorMap.remove(job.getId() + "-" + metrics.getName());
+        if (metrics.isHasSubTask()) {
+            metricsTimeoutMonitorMap.remove(job.getId() + "-" + metrics.getName() + "-sub-" + metrics.getSubTaskId());
+            boolean isLastTask = metrics.consumeSubTaskResponse(metricsData);
+            if (isLastTask) {
+                metricsData = metrics.getSubTaskDataRef().get();
+            } else {
+                return;
+            }
+        } else {
+            metricsTimeoutMonitorMap.remove(job.getId() + "-" + metrics.getName());
+        }
         Set<Metrics> metricsSet = job.getNextCollectMetrics(metrics, false);
         if (job.isCyclic()) {
             // If it is an asynchronous periodic cyclic task, directly send the collected data of the indicator group to the message middleware
             // 若是异步的周期性循环任务,直接发送指标组的采集数据到消息中间件
-            kafkaDataExporter.send(metricsData);
+            commonDataQueue.sendMetricsData(metricsData);
             if (log.isDebugEnabled()) {
                 log.debug("Cyclic Job: {}",metricsData.getMetrics());
                 for (CollectRep.ValueRow valueRow : metricsData.getValuesList()) {
@@ -197,8 +219,9 @@ public class CommonDispatcher implements MetricsTaskDispatch, CollectDataDispatc
             // If the availability collection fails, the next indicator group scheduling will be cancelled and the next round of scheduling will be entered directly.
             // 若metricsSet为null表示执行完成
             // 或判断采集指标组是否优先级为0，即为可用性采集指标组 若可用性采集失败 则取消后面的指标组调度直接进入下一轮调度
-            if (metricsSet == null
-                    || (metrics.getPriority() == (byte) 0 && metricsData.getCode() != CollectRep.Code.SUCCESS)) {
+            boolean isAvailableCollectFailed = metricsSet != null && !metricsSet.isEmpty()
+                    && metrics.getPriority() == (byte) 0 && metricsData.getCode() != CollectRep.Code.SUCCESS;
+            if (metricsSet == null || isAvailableCollectFailed) {
                 // The collection and execution of all index groups of this job are completed.
                 // The periodic task pushes the task to the time wheel again.
                 // First, determine the execution time of the task and the task collection interval.
@@ -218,17 +241,31 @@ public class CommonDispatcher implements MetricsTaskDispatch, CollectDataDispatc
                 // The execution of the current level indicator group is completed, and the execution of the next level indicator group starts
                 // 当前级别指标组执行完成，开始执行下一级别的指标组
                 // use pre collect metrics data to replace next metrics config params
-                Map<String, Configmap> configmap = getConfigmapFromPreCollectData(metricsData);
+                List<Map<String, Configmap>> configmapList = getConfigmapFromPreCollectData(metricsData);
                 metricsSet.forEach(metricItem -> {
-                    if (configmap != null && !configmap.isEmpty()) {
-                        JsonElement jsonElement = GSON.toJsonTree(metricItem);
-                        CollectUtil.replaceCryPlaceholder(jsonElement, configmap);
-                        metricItem = GSON.fromJson(jsonElement, Metrics.class);
+                    if (configmapList != null && !configmapList.isEmpty() && CollectUtil.containCryPlaceholder(GSON.toJsonTree(metricItem))) {
+                        int subTaskNum = Math.min(configmapList.size(), MAX_SUB_TASK_NUM);
+                        AtomicInteger subTaskNumAtomic = new AtomicInteger(subTaskNum);
+                        AtomicReference<CollectRep.MetricsData> metricsDataReference = new AtomicReference<>();
+                        for (int index = 0; index < subTaskNum; index ++) {
+                            Map<String, Configmap> configmap = configmapList.get(index);
+                            JsonElement metricJson = GSON.toJsonTree(metricItem);
+                            CollectUtil.replaceCryPlaceholder(metricJson, configmap);
+                            Metrics metric = GSON.fromJson(metricJson, Metrics.class);
+                            metric.setSubTaskNum(subTaskNumAtomic);
+                            metric.setSubTaskId(index);
+                            metric.setSubTaskDataRef(metricsDataReference);
+                            MetricsCollect metricsCollect = new MetricsCollect(metric, timeout, this, unitConvertList);
+                            jobRequestQueue.addJob(metricsCollect);
+                            metricsTimeoutMonitorMap.put(job.getId() + "-" + metric.getName() + "-sub-" + index,
+                                    new MetricsTime(System.currentTimeMillis(), metric, timeout));
+                        }
+                    } else {
+                        MetricsCollect metricsCollect = new MetricsCollect(metricItem, timeout, this, unitConvertList);
+                        jobRequestQueue.addJob(metricsCollect);
+                        metricsTimeoutMonitorMap.put(job.getId() + "-" + metricItem.getName(),
+                                new MetricsTime(System.currentTimeMillis(), metricItem, timeout));
                     }
-                    MetricsCollect metricsCollect = new MetricsCollect(metricItem, timeout, this);
-                    jobRequestQueue.addJob(metricsCollect);
-                    metricsTimeoutMonitorMap.put(job.getId() + "-" + metricItem.getName(),
-                            new MetricsTime(System.currentTimeMillis(), metricItem, timeout));
                 });
             } else {
                 // The list of indicator groups at the current execution level has not been fully executed.
@@ -260,7 +297,7 @@ public class CommonDispatcher implements MetricsTaskDispatch, CollectDataDispatc
                 // The execution of the current level indicator group is completed, and the execution of the next level indicator group starts
                 // 当前级别指标组执行完成，开始执行下一级别的指标组
                 metricsSet.forEach(metricItem -> {
-                    MetricsCollect metricsCollect = new MetricsCollect(metricItem, timeout, this);
+                    MetricsCollect metricsCollect = new MetricsCollect(metricItem, timeout, this, unitConvertList);
                     jobRequestQueue.addJob(metricsCollect);
                     metricsTimeoutMonitorMap.put(job.getId() + "-" + metricItem.getName(),
                             new MetricsTime(System.currentTimeMillis(), metricItem, timeout));
@@ -274,23 +311,26 @@ public class CommonDispatcher implements MetricsTaskDispatch, CollectDataDispatc
         }
     }
 
-    private Map<String, Configmap> getConfigmapFromPreCollectData(CollectRep.MetricsData metricsData) {
+    private List<Map<String, Configmap>> getConfigmapFromPreCollectData(CollectRep.MetricsData metricsData) {
         if (metricsData.getValuesCount() <= 0 || metricsData.getFieldsCount() <= 0) {
             return null;
         }
-        CollectRep.ValueRow valueRow = metricsData.getValues(0);
-        if (valueRow.getColumnsCount() != metricsData.getFieldsCount()) {
-            return null;
+        List<Map<String, Configmap>> mapList = new LinkedList<>();
+        for (CollectRep.ValueRow valueRow : metricsData.getValuesList()) {
+            if (valueRow.getColumnsCount() != metricsData.getFieldsCount()) {
+                continue;
+            }
+            Map<String, Configmap> configmapMap = new HashMap<>(valueRow.getColumnsCount());
+            int index = 0;
+            for (CollectRep.Field field : metricsData.getFieldsList()) {
+                String value = valueRow.getColumns(index);
+                index++;
+                Configmap configmap = new Configmap(field.getName(), value, Integer.valueOf(field.getType()).byteValue());
+                configmapMap.put(field.getName(), configmap);
+            }
+            mapList.add(configmapMap);
         }
-        Map<String, Configmap> configmapMap = new HashMap<>(valueRow.getColumnsCount());
-        int index = 0;
-        for (CollectRep.Field field : metricsData.getFieldsList()) {
-            String value = valueRow.getColumns(index);
-            index++;
-            Configmap configmap = new Configmap(field.getName(), value, Integer.valueOf(field.getType()).byteValue());
-            configmapMap.put(field.getName(), configmap);
-        }
-        return configmapMap;
+        return mapList;
     }
 
     @Data

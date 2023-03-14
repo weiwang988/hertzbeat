@@ -19,7 +19,7 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <parent>
-        <artifactId>monitor</artifactId>
+        <artifactId>hertzbeat</artifactId>
         <groupId>com.usthe.tancloud</groupId>
         <version>1.0</version>
     </parent>
@@ -28,7 +28,10 @@
     <artifactId>alerter</artifactId>
 
     <properties>
-
+        <common.version>1.0</common.version>
+        <influxdb-client-java.version>3.4.0</influxdb-client-java.version>
+        <kafka-clients.version>3.4.0</kafka-clients.version>
+        <spring-cloud-starter-openfeign.version>3.0.5</spring-cloud-starter-openfeign.version>
     </properties>
 
     <dependencies>
@@ -36,13 +39,7 @@
         <dependency>
             <groupId>com.usthe.tancloud</groupId>
             <artifactId>common</artifactId>
-            <version>1.0</version>
-        </dependency>
-        <!-- collector -->
-        <dependency>
-            <groupId>com.usthe.tancloud</groupId>
-            <artifactId>collector</artifactId>
-            <version>1.0</version>
+            <version>${common.version}</version>
             <scope>provided</scope>
         </dependency>
         <!-- spring -->
@@ -81,13 +78,13 @@
         <dependency>
             <groupId>com.influxdb</groupId>
             <artifactId>influxdb-client-java</artifactId>
-            <version>3.4.0</version>
+            <version>${influxdb-client-java.version}</version>
         </dependency>
         <!-- kafka -->
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>kafka-clients</artifactId>
-            <version>3.0.0</version>
+            <version>${kafka-clients.version}</version>
         </dependency>
         <!--redis-->
         <dependency>
@@ -97,21 +94,15 @@
         </dependency>
         <!-- swagger -->
         <dependency>
-            <groupId>io.springfox</groupId>
-            <artifactId>springfox-boot-starter</artifactId>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-ui</artifactId>
             <scope>provided</scope>
-        </dependency>
-        <!-- 表达式计算 -->
-        <dependency>
-            <groupId>com.googlecode.aviator</groupId>
-            <artifactId>aviator</artifactId>
-            <version>5.2.7</version>
         </dependency>
         <!-- feign -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-openfeign</artifactId>
-            <version>3.0.5</version>
+            <version>${spring-cloud-starter-openfeign.version}</version>
             <scope>provided</scope>
         </dependency>
     </dependencies>

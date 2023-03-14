@@ -20,31 +20,22 @@ package com.usthe.collector.dispatch;
 import com.googlecode.aviator.AviatorEvaluator;
 import com.googlecode.aviator.Expression;
 import com.usthe.collector.collect.AbstractCollect;
-import com.usthe.collector.collect.database.JdbcCommonCollect;
-import com.usthe.collector.collect.http.HttpCollectImpl;
-import com.usthe.collector.collect.http.SslCertificateCollectImpl;
-import com.usthe.collector.collect.icmp.IcmpCollectImpl;
-import com.usthe.collector.collect.jmx.JmxCollectImpl;
-import com.usthe.collector.collect.redis.RedisSingleCollectImpl;
-import com.usthe.collector.collect.snmp.SnmpCollectImpl;
-import com.usthe.collector.collect.ssh.SshCollectImpl;
-import com.usthe.collector.collect.telnet.TelnetCollectImpl;
+import com.usthe.collector.collect.strategy.CollectStrategyFactory;
 import com.usthe.collector.dispatch.timer.Timeout;
 import com.usthe.collector.dispatch.timer.WheelTimerTask;
+import com.usthe.collector.dispatch.unit.UnitConvert;
+import com.usthe.collector.util.CollectUtil;
 import com.usthe.common.entity.job.Job;
 import com.usthe.common.entity.job.Metrics;
 import com.usthe.common.entity.message.CollectRep;
 import com.usthe.common.util.CommonConstants;
 import com.usthe.common.util.CommonUtil;
+import com.usthe.common.util.Pair;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -108,7 +99,11 @@ public class MetricsCollect implements Runnable, Comparable<MetricsCollect> {
      */
     protected long startTime;
 
-    public MetricsCollect(Metrics metrics, Timeout timeout, CollectDataDispatch collectDataDispatch) {
+    protected List<UnitConvert> unitConvertList;
+
+    public MetricsCollect(Metrics metrics, Timeout timeout,
+                          CollectDataDispatch collectDataDispatch,
+                          List<UnitConvert> unitConvertList) {
         this.newTime = System.currentTimeMillis();
         this.timeout = timeout;
         this.metrics = metrics;
@@ -118,6 +113,7 @@ public class MetricsCollect implements Runnable, Comparable<MetricsCollect> {
         this.app = job.getApp();
         this.collectDataDispatch = collectDataDispatch;
         this.isCyclic = job.isCyclic();
+        this.unitConvertList = unitConvertList;
         // Temporary one-time tasks are executed with high priority
         // 临时一次性任务执行优先级高
         if (isCyclic) {
@@ -135,41 +131,9 @@ public class MetricsCollect implements Runnable, Comparable<MetricsCollect> {
         response.setApp(app);
         response.setId(monitorId);
         response.setMetrics(metrics.getName());
-
         // According to the indicator group collection protocol, application type, etc., dispatch to the real application indicator group collection implementation class
         // 根据指标组采集协议,应用类型等来调度到真正的应用指标组采集实现类
-        AbstractCollect abstractCollect = null;
-        switch (metrics.getProtocol()) {
-            case DispatchConstants.PROTOCOL_HTTP:
-                abstractCollect = HttpCollectImpl.getInstance();
-                break;
-            case DispatchConstants.PROTOCOL_ICMP:
-                abstractCollect = IcmpCollectImpl.getInstance();
-                break;
-            case DispatchConstants.PROTOCOL_TELNET:
-                abstractCollect = TelnetCollectImpl.getInstance();
-                break;
-            case DispatchConstants.PROTOCOL_JDBC:
-                abstractCollect = JdbcCommonCollect.getInstance();
-                break;
-            case DispatchConstants.PROTOCOL_SSH:
-                abstractCollect = SshCollectImpl.getInstance();
-                break;
-            case DispatchConstants.PROTOCOL_REDIS:
-                abstractCollect = RedisSingleCollectImpl.getInstance();
-                break;
-            case DispatchConstants.PROTOCOL_SNMP:
-                abstractCollect = SnmpCollectImpl.getInstance();
-                break;
-            case DispatchConstants.PROTOCOL_JMX:
-                abstractCollect = JmxCollectImpl.getInstance();
-                break;
-            case DispatchConstants.PROTOCOL_SSL_CERT:
-                abstractCollect = SslCertificateCollectImpl.getInstance();
-                break;
-            default:
-                break;
-        }
+        AbstractCollect abstractCollect = CollectStrategyFactory.invoke(metrics.getProtocol());
         if (abstractCollect == null) {
             log.error("[Dispatcher] - not support this: app: {}, metrics: {}, protocol: {}.",
                     app, metrics.getName(), metrics.getProtocol());
@@ -217,7 +181,12 @@ public class MetricsCollect implements Runnable, Comparable<MetricsCollect> {
         collectData.setPriority(metrics.getPriority());
         List<CollectRep.Field> fieldList = new LinkedList<>();
         for (Metrics.Field field : metrics.getFields()) {
-            fieldList.add(CollectRep.Field.newBuilder().setName(field.getField()).setType(field.getType()).build());
+            CollectRep.Field.Builder fieldBuilder = CollectRep.Field.newBuilder();
+            fieldBuilder.setName(field.getField()).setType(field.getType());
+            if (field.getUnit() != null) {
+                fieldBuilder.setUnit(field.getUnit());
+            }
+            fieldList.add(fieldBuilder.build());
         }
         collectData.addAllFields(fieldList);
         List<CollectRep.ValueRow> aliasRowList = collectData.getValuesList();
@@ -233,21 +202,18 @@ public class MetricsCollect implements Runnable, Comparable<MetricsCollect> {
         Map<String, String> fieldAliasMap = new HashMap<>(8);
         Map<String, Expression> fieldExpressionMap = metrics.getCalculates()
                 .stream()
-                .map(cal -> {
-                    int splitIndex = cal.indexOf("=");
-                    String field = cal.substring(0, splitIndex).trim();
-                    String expressionStr = cal.substring(splitIndex + 1).trim();
-                    Expression expression = null;
-                    try {
-                        expression = AviatorEvaluator.compile(expressionStr, true);
-                    } catch (Exception e) {
-                        fieldAliasMap.put(field, expressionStr);
-                        return null;
-                    }
-                    return new Object[]{field, expression};
-                })
+                .map(cal -> transformCal(cal, fieldAliasMap))
                 .filter(Objects::nonNull)
-                .collect(Collectors.toMap(arr -> (String) arr[0], arr -> (Expression) arr[1]));
+                .collect(Collectors.toMap(arr -> (String) arr[0], arr -> (Expression) arr[1], (oldValue, newValue) -> newValue));
+
+        if (metrics.getUnits() == null) {
+            metrics.setUnits(Collections.emptyList());
+        }
+        Map<String, Pair<String, String>> fieldUnitMap = metrics.getUnits()
+                .stream()
+                .map(this::transformUnit)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toMap(arr -> (String) arr[0], arr -> (Pair<String, String>) arr[1], (oldValue, newValue) -> newValue));
 
         List<Metrics.Field> fields = metrics.getFields();
         List<String> aliasFields = metrics.getAliasFields();
@@ -259,22 +225,30 @@ public class MetricsCollect implements Runnable, Comparable<MetricsCollect> {
                 String aliasFieldValue = aliasRow.getColumns(aliasIndex);
                 if (!CommonConstants.NULL_VALUE.equals(aliasFieldValue)) {
                     aliasFieldValueMap.put(aliasFields.get(aliasIndex), aliasFieldValue);
-                } else {
-                    aliasFieldValueMap.put(aliasFields.get(aliasIndex), null);
                 }
             }
+
             StringBuilder instanceBuilder = new StringBuilder();
             for (Metrics.Field field : fields) {
                 String realField = field.getField();
                 Expression expression = fieldExpressionMap.get(realField);
                 String value = null;
+                String aliasFieldUnit = null;
                 if (expression != null) {
                     // If there is a calculation expression, calculate the value
                     // 存在计算表达式 则计算值
                     if (CommonConstants.TYPE_NUMBER == field.getType()) {
                         for (String variable : expression.getVariableFullNames()) {
-                            Double doubleValue = CommonUtil.parseStrDouble(aliasFieldValueMap.get(variable));
-                            fieldValueMap.put(variable, doubleValue);
+                            // extract double value and unit from aliasField value
+                            CollectUtil.DoubleAndUnit doubleAndUnit = CollectUtil
+                                    .extractDoubleAndUnitFromStr(aliasFieldValueMap.get(variable));
+                            if (doubleAndUnit != null) {
+                                Double doubleValue = doubleAndUnit.getValue();
+                                aliasFieldUnit = doubleAndUnit.getUnit();
+                                fieldValueMap.put(variable, doubleValue);
+                            } else {
+                                fieldValueMap.put(variable, null);
+                            }
                         }
                     } else {
                         for (String variable : expression.getVariableFullNames()) {
@@ -283,12 +257,13 @@ public class MetricsCollect implements Runnable, Comparable<MetricsCollect> {
                         }
                     }
                     try {
+                        // valueList为空时也执行,涵盖纯字符串赋值表达式
                         Object objValue = expression.execute(fieldValueMap);
                         if (objValue != null) {
                             value = String.valueOf(objValue);
                         }
                     } catch (Exception e) {
-                        log.warn(e.getMessage());
+                        log.info("[calculates execute warning] {}.",  e.getMessage());
                     }
                 } else {
                     // does not exist then map the alias value
@@ -298,6 +273,28 @@ public class MetricsCollect implements Runnable, Comparable<MetricsCollect> {
                         value = aliasFieldValueMap.get(aliasField);
                     } else {
                         value = aliasFieldValueMap.get(realField);
+                    }
+                    if (CommonConstants.TYPE_NUMBER == field.getType() && value != null) {
+                        CollectUtil.DoubleAndUnit doubleAndUnit = CollectUtil
+                                .extractDoubleAndUnitFromStr(value);
+                        value = String.valueOf(doubleAndUnit.getValue());
+                        aliasFieldUnit = doubleAndUnit.getUnit();
+                    }
+                }
+                // 单位处理
+                Pair<String, String> unitPair = fieldUnitMap.get(realField);
+                if (aliasFieldUnit != null) {
+                    if (unitPair != null) {
+                        unitPair.setLeft(aliasFieldUnit);
+                    } else if (field.getUnit() != null && !aliasFieldUnit.equalsIgnoreCase(field.getUnit())) {
+                        unitPair = Pair.of(aliasFieldUnit, field.getUnit());
+                    }
+                }
+                if (value != null && unitPair != null) {
+                    for (UnitConvert unitConvert : unitConvertList) {
+                        if (unitConvert.checkUnit(unitPair.getLeft()) && unitConvert.checkUnit(unitPair.getRight())) {
+                            value = unitConvert.convert(value, unitPair.getLeft(), unitPair.getRight());
+                        }
                     }
                 }
                 // Handle indicator values that may have units such as 34%, 34Mb, and limit values to 4 decimal places
@@ -315,11 +312,64 @@ public class MetricsCollect implements Runnable, Comparable<MetricsCollect> {
                 }
             }
             aliasFieldValueMap.clear();
-            // set instance         设置实例instance
+            // set instance
             realValueRowBuilder.setInstance(instanceBuilder.toString());
             collectData.addValues(realValueRowBuilder.build());
             realValueRowBuilder.clear();
         }
+    }
+
+
+    /**
+     *
+     * @param cal
+     * @param fieldAliasMap
+     * @return
+     */
+    private Object[] transformCal(String cal, Map<String, String> fieldAliasMap) {
+        int splitIndex = cal.indexOf("=");
+        String field = cal.substring(0, splitIndex).trim();
+        String expressionStr = cal.substring(splitIndex + 1).trim();
+        Expression expression;
+        try {
+            expression = AviatorEvaluator.compile(expressionStr, true);
+        } catch (Exception e) {
+            fieldAliasMap.put(field, expressionStr);
+            return null;
+        }
+        return new Object[]{field, expression};
+    }
+
+
+    /**
+     * transform unit
+     * @param unit
+     * @return
+     */
+    private Object[] transformUnit(String unit) {
+        int equalIndex = unit.indexOf("=");
+        int arrowIndex = unit.indexOf("->");
+        if (equalIndex < 0 || arrowIndex < 0) {
+            return null;
+        }
+        String field = unit.substring(0, equalIndex).trim();
+        String originUnit = unit.substring(equalIndex + 1, arrowIndex).trim();
+        String newUnit = unit.substring(arrowIndex + 2).trim();
+        return new Object[]{field, Pair.of(originUnit, newUnit)};
+    }
+
+    /**
+     * build CollectRep.Field
+     * @param field
+     * @return
+     */
+    private CollectRep.Field doCollectRepField(Metrics.Field field) {
+        CollectRep.Field.Builder fieldBuilder = CollectRep.Field.newBuilder();
+        fieldBuilder.setName(field.getField()).setType(field.getType());
+        if (field.getUnit() != null) {
+            fieldBuilder.setUnit(field.getUnit());
+        }
+        return fieldBuilder.build();
     }
 
     private boolean fastFailed() {

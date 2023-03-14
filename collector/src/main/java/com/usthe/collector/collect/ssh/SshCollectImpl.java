@@ -21,12 +21,14 @@ import com.usthe.collector.collect.AbstractCollect;
 import com.usthe.collector.collect.common.cache.CacheIdentifier;
 import com.usthe.collector.collect.common.cache.CommonCache;
 import com.usthe.collector.collect.common.ssh.CommonSshClient;
+import com.usthe.collector.dispatch.DispatchConstants;
 import com.usthe.collector.util.CollectorConstants;
 import com.usthe.collector.util.KeyPairUtil;
 import com.usthe.common.entity.job.Metrics;
 import com.usthe.common.entity.job.protocol.SshProtocol;
 import com.usthe.common.entity.message.CollectRep;
 import com.usthe.common.util.CommonConstants;
+import com.usthe.common.util.CommonUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.sshd.client.SshClient;
 import org.apache.sshd.client.channel.ClientChannel;
@@ -56,13 +58,8 @@ public class SshCollectImpl extends AbstractCollect {
     private static final String PARSE_TYPE_MULTI_ROW = "multiRow";
     private static final String PARSE_TYPE_NETCAT = "netcat";
 
-    private SshCollectImpl() {
+    public SshCollectImpl() {
     }
-
-    public static SshCollectImpl getInstance() {
-        return SshCollectImpl.Singleton.INSTANCE;
-    }
-
 
     @Override
     public void collect(CollectRep.MetricsData.Builder builder, long appId, String app, Metrics metrics) {
@@ -99,7 +96,7 @@ public class SshCollectImpl extends AbstractCollect {
             String result = response.toString();
             if (!StringUtils.hasText(result)) {
                 builder.setCode(CollectRep.Code.FAIL);
-                builder.setMsg("采集数据失败");
+                builder.setMsg("collect response data is null");
             }
             switch (sshProtocol.getParseType()) {
                 case PARSE_TYPE_NETCAT:
@@ -116,18 +113,26 @@ public class SshCollectImpl extends AbstractCollect {
                     break;
             }
         } catch (ConnectException connectException) {
-            log.debug(connectException.getMessage());
+            String errorMsg = CommonUtil.getMessageFromThrowable(connectException);
+            log.info(errorMsg);
             builder.setCode(CollectRep.Code.UN_CONNECTABLE);
-            builder.setMsg("对端拒绝连接：服务未启动端口监听或防火墙");
+            builder.setMsg("The peer refused to connect: service port does not listening or firewall: " + errorMsg);
         } catch (IOException ioException) {
-            log.debug(ioException.getMessage());
+            String errorMsg = CommonUtil.getMessageFromThrowable(ioException);
+            log.info(errorMsg);
             builder.setCode(CollectRep.Code.UN_CONNECTABLE);
-            builder.setMsg("对端连接失败 " + ioException.getMessage());
+            builder.setMsg("Peer connection failed: " + errorMsg);
         } catch (Exception exception) {
-            log.debug(exception.getMessage());
+            String errorMsg = CommonUtil.getMessageFromThrowable(exception);
+            log.warn(errorMsg, exception);
             builder.setCode(CollectRep.Code.FAIL);
-            builder.setMsg(exception.getMessage());
+            builder.setMsg(errorMsg);
         }
+    }
+
+    @Override
+    public String supportProtocol() {
+        return DispatchConstants.PROTOCOL_SSH;
     }
 
 
@@ -258,9 +263,5 @@ public class SshCollectImpl extends AbstractCollect {
         if (metrics == null || metrics.getSsh() == null) {
             throw new Exception("Ssh collect must has ssh params");
         }
-    }
-
-    private static class Singleton {
-        private static final SshCollectImpl INSTANCE = new SshCollectImpl();
     }
 }

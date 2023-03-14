@@ -2,26 +2,30 @@
   "docs": [
     {
       "type": "category",
-      "label": "快速入门",
+      "label": "quickstart",
       "items": [
         "introduce",
         "start/quickstart",
-        "start/tdengine-init",
         "start/docker-deploy",
         "start/package-deploy",
-        "start/ssl-cert-practice",
-        "start/mysql-change"
+        "start/rainbond-deploy",
+        "start/iotdb-init",
+        "start/tdengine-init",
+        "start/mysql-change",
+        "start/account-modify",
+        "start/custom-config",
+        "start/ssl-cert-practice"
       ]
     },
     {
       "type": "category",
-      "label": "自定义监控",
+      "label": "custom",
       "items": [
         "advanced/extend-point",
         "advanced/extend-tutorial",
         {
           "type": "category",
-          "label": "HTTP协议",
+          "label": "http",
           "items": [
             "advanced/extend-http",
             "advanced/extend-http-default",
@@ -32,14 +36,14 @@
         },
         {
           "type": "category",
-          "label": "JDBC协议",
+          "label": "jdbc",
           "items": [
             "advanced/extend-jdbc"
           ]
         },
         {
           "type": "category",
-          "label": "SSH协议",
+          "label": "ssh",
           "items": [
             "advanced/extend-ssh"
           ]
@@ -48,35 +52,42 @@
     },
     {
       "type": "category",
-      "label": "帮助文档",
+      "label": "help",
       "items": [
         "help/guide",
         {
           "type": "category",
-          "label": "应用服务监控",
+          "label": "service",
           "items": [
             "help/website",
             "help/api",
             "help/ping",
             "help/port",
             "help/fullsite",
-            "help/jvm"
+            "help/ssl_cert",
+            "help/jvm",
+            "help/springboot2"
+
           ]
         },
         {
           "type": "category",
-          "label": "数据库监控",
+          "label": "database",
           "items": [
             "help/mysql",
             "help/mariadb",
             "help/postgresql",
             "help/sqlserver",
-            "help/oracle"
+            "help/oracle",
+            "help/dm",
+            "help/opengauss",
+            "help/iotdb",
+            "help/redis"
           ]
         },
         {
           "type": "category",
-          "label": "操作系统",
+          "label": "os",
           "items": [
             "help/linux",
             "help/windows",
@@ -86,16 +97,29 @@
         },
         {
           "type": "category",
-          "label": "中间件",
+          "label": "mid",
           "items": [
             "help/zookeeper",
             "help/kafka",
-            "help/tomcat"
+            "help/tomcat",
+            "help/shenyu",
+            "help/dynamic_tp",
+            "help/rabbitmq",
+            "help/activemq",
+            "help/jetty"
           ]
         },
         {
           "type": "category",
-          "label": "阈值告警配置",
+          "label": "cloud-native",
+          "items": [
+            "help/docker",
+            "help/kubernetes"
+          ]
+        },
+        {
+          "type": "category",
+          "label": "threshold",
           "items": [
             "help/alert_threshold",
             "help/alert_threshold_expr"
@@ -103,10 +127,13 @@
         },
         {
           "type": "category",
-          "label": "告警通知配置",
+          "label": "notice",
           "items": [
             "help/alert_email",
             "help/alert_webhook",
+            "help/alert_discord",
+            "help/alert_slack",
+            "help/alert_telegram",
             "help/alert_wework",
             "help/alert_dingtalk",
             "help/alert_feishu",
@@ -120,12 +147,13 @@
       "type": "category",
       "label": "Others",
       "items": [
+        "others/developer",
+        "others/contributing",
         "others/contact",
         "others/design",
         "others/sponsor",
         "others/private",
-        "others/resource",
-        "others/contributing"
+        "others/resource"
       ]
     }
   ]

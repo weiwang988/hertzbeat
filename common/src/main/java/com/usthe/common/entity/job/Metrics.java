@@ -17,14 +17,19 @@
 
 package com.usthe.common.entity.job;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.usthe.common.entity.job.protocol.*;
+import com.usthe.common.entity.message.CollectRep;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Details of the collection of indicators collected by monitoring
@@ -38,6 +43,7 @@ import java.util.Objects;
 @AllArgsConstructor
 @NoArgsConstructor
 @Builder
+@Slf4j
 public class Metrics {
 
     /**
@@ -60,6 +66,11 @@ public class Metrics {
      */
     private Byte priority;
     /**
+     * Is it visible true or false
+     * if false, web ui will not see this metrics.
+     */
+    private boolean visible = true;
+    /**
      * Public attribute - collection and monitoring final result attribute set eg: speed | times | size
      * 公共属性-采集监控的最终结果属性集合 eg: speed | times | size
      */
@@ -76,6 +87,15 @@ public class Metrics {
      * https://www.yuque.com/boyan-avfmj/aviatorscript/ban32m
      */
     private List<String> calculates;
+    /**
+     * unit conversion expr
+     * eg:
+     * - heap_used=B->MB
+     * - heap_total=B->MB
+     * - disk_free=B->GB
+     * - disk_total=B->GB
+     */
+    private List<String> units;
     /**
      * Monitoring configuration information using the http protocol
      * 使用http协议的监控配置信息
@@ -111,18 +131,85 @@ public class Metrics {
      * 使用公共的redis协议的监控配置信息
      */
     private RedisProtocol redis;
-
+    /**
+     * Monitoring configuration information using the public mongodb protocol
+     * 使用公共的mongodb协议的监控配置信息
+     */
+    private MongodbProtocol mongodb;
     /**
      * Get monitoring configuration information using public JMX protocol
      * 使用公共JMX协议获取监控配置信息
      */
     private JmxProtocol jmx;
-
     /**
      * Monitoring configuration information using the public snmp protocol
      * 使用公共的snmp协议的监控配置信息
      */
     private SnmpProtocol snmp;
+    /**
+     * Monitoring configuration information using the public ftp protocol
+     * 使用公共的ftp协议的监控配置信息
+     */
+    private FtpProtocol ftp;
+
+    /**
+     * collector use - Temporarily store subTask indicator group response data
+     * collector使用 - 临时存储分级任务指标响应数据
+     */
+    @JsonIgnore
+    private transient AtomicReference<CollectRep.MetricsData> subTaskDataRef;
+
+    /**
+     * collector use - Temporarily store subTask running num
+     * collector使用 - 分级任务正在运行中的数量
+     */
+    @JsonIgnore
+    private transient AtomicInteger subTaskNum;
+
+    /**
+     * collector use - Temporarily store subTask id
+     * collector使用 - 分级任务ID
+     */
+    @JsonIgnore
+    private transient Integer subTaskId;
+
+    /**
+     * is has subTask
+     * @return true - has
+     */
+    public boolean isHasSubTask() {
+        return subTaskNum != null;
+    }
+
+    /**
+     * consume subTask
+     * @param metricsData response data
+     * @return is last task?
+     */
+    public boolean consumeSubTaskResponse(CollectRep.MetricsData metricsData) {
+        if (subTaskNum == null) {
+            return true;
+        }
+        synchronized (subTaskNum) {
+            int index = subTaskNum.decrementAndGet();
+            if (subTaskDataRef.get() == null) {
+                subTaskDataRef.set(metricsData);
+            } else {
+                if (metricsData.getValuesCount() >= 1) {
+                    CollectRep.MetricsData.Builder dataBuilder = CollectRep.MetricsData.newBuilder(subTaskDataRef.get());
+                    for (CollectRep.ValueRow valueRow : metricsData.getValuesList()) {
+                        if (valueRow.getColumnsCount() == dataBuilder.getFieldsCount()) {
+                            dataBuilder.addValues(valueRow);
+                        } else {
+                            log.error("consume subTask data value not mapping filed");
+                        }
+                    }
+                    subTaskDataRef.set(dataBuilder.build());
+                }
+            }
+            return index == 0;
+        }
+    }
 
     @Override
     public boolean equals(Object o) {
